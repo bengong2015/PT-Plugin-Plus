@@ -4,7 +4,7 @@
     "description": "憨憨",
     "url": "https://hhanclub.top/",
     "icon": "https://hhanclub.top/favicon.ico",
-    "tags": [],
+    "tags": ["综合", "纪录片"],
     "schema": "NexusPHP",
     "host": "hhanclub.top",
     "levelRequirements": [
@@ -83,6 +83,16 @@
     ],
     "collaborator": ["koal", "zhuweitung"],
     "selectors": {
+        "userBaseInfo": {
+            "merge": true,
+            "page": "/index.php",
+            "fields": {
+                "messageCount": {
+                    "selector": ["div.w-full > a[href='messages.php']"],
+                    "filters": ["query.text().match(/(\\d+)/)", "(query && query.length>=2)?parseInt(query[1]):0"]
+                }
+            }
+        },
         "userExtendInfo": {
             "merge": true,
             "fields": {

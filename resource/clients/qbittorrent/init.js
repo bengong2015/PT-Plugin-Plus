@@ -169,7 +169,15 @@
      */
     addTorrentFromUrl(data, callback) {
       let formData = new FormData();
-      let {savePath, category, clientOptions} = data, autoTMM = true, qbCategories
+      let {savePath, category, clientOptions} = data, autoTMM = undefined, qbCategories
+
+      if (savePath) {
+        formData.append("savepath", data.savePath)
+        // 禁用自动管理种子
+        autoTMM = false
+      } else {
+        savePath = "_"
+      }
 
       if (clientOptions && clientOptions.enableCategory) {
         qbCategories = clientOptions.qbCategories
@@ -189,10 +197,8 @@
         }
       }
 
-      formData.append("autoTMM", autoTMM);
-
-      if (savePath) {
-        formData.append("savepath", savePath);
+      if (autoTMM !== undefined) {
+        formData.append("autoTMM", autoTMM);
       }
 
       if (category != undefined) {

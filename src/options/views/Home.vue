@@ -3,18 +3,19 @@
     <v-alert :value="true" type="info">{{ $t("home.title") }}</v-alert>
     <v-card>
       <v-card-title v-if="sites && sites.length > 0">
-        <v-btn color="success" @click="getInfos" :loading="loading" :title="$t('home.getInfos')">
+        <v-btn class="batchBtn" color="success" @click="getInfos" :loading="loading" :title="$t('home.getGroupInfos')">
           <v-icon class="mr-2">cached</v-icon>
-          {{ $t("home.getInfos") }}
+          {{ $t("home.getGroupInfos") }}
         </v-btn>
-        <v-btn to="/user-data-timeline" color="success" :title="$t('home.timeline')">
+        <v-btn class="batchBtn" to="/user-data-timeline" color="success" :title="$t('home.timeline')">
           <v-icon>timeline</v-icon>
         </v-btn>
 
-        <v-btn to="/statistic" color="success" :title="$t('home.statistic')">
+        <v-btn class="batchBtn" to="/statistic" color="success" :title="$t('home.statistic')">
           <v-icon>equalizer</v-icon>
         </v-btn>
 
+        <!--保留这个, 提醒用户有需要进一步处理的站点-->
         <div v-for="tp of allOpenTypes">
           <v-btn class="batchBtn" :color="tp.color" :title="$t(`home.${tp.type}`)"
                  v-if="getAllUrlsByType(tp.type).length > 0" @click="openAllUrlsByType(tp.type)">
@@ -62,6 +63,20 @@
             <span v-if="index === 1" class="grey--text caption">(+{{ selectedHeaders.length - 1 }} others)</span>
           </template>
         </v-select>
+        <v-select v-model="selectedTags" class="select-tags" :items="allSortedTags" :label="$t('home.selectedTags')"
+                  :menu-props="{ maxHeight: '70%' }" @change="updateViewOptions"
+                  multiple outlined return-object>
+          <template v-slot:selection="{ item, index }">
+            <!--tag-->
+            <v-chip v-if="index === 0">
+              <!--<span>{{ selectedTags.length }} Tags</span>-->
+              <span>+{{ selectedTags.length }}</span>
+            </v-chip>
+            <!--&lt;!&ndash;(+12 others)&ndash;&gt;-->
+            <!--<span v-if="index === 1" class="grey&#45;&#45;text caption">(+{{ selectedTags.length - 1 }} others)</span>-->
+            <!--<span v-if="index === 0" class="grey&#45;&#45;text">({{ selectedTags.length }} Tags)</span>-->
+          </template>
+        </v-select>
 
         <!-- <AutoSignWarning /> -->
         <v-spacer></v-spacer>
@@ -70,7 +85,7 @@
           enterkeyhint="search"></v-text-field>
       </v-card-title>
 
-      <v-data-table :search="filterKey" :headers="showHeaders" :items="sites" :pagination.sync="pagination"
+      <v-data-table :search="filterKey" :headers="showHeaders" :items="filteredSitesByTags" :pagination.sync="pagination"
         item-key="host" class="elevation-1" ref="userDataTable" :no-data-text="$t('home.nodata')">
         <template slot="items" slot-scope="props">
           <!-- 站点 -->
@@ -365,10 +380,11 @@
             {{ props.item.user.ratio | formatRatio }}
           </td>
           <td v-if="showColumn('user.uploads')" class="number">
-            <template v-if="props.item.user.uploads && props.item.user.uploads > 0">{{ props.item.user.uploads}}</template>
+            <!--{{ props.item.user.uploads === null ? 'NULL' : props.item.user.uploads === undefined ? 'N/A' : props.item.user.uploads === '' ? 'N-A' : props.item.user.uploads }}-->
+            <template>{{ props.item.user.uploads || 0 }}</template>
           </td>
           <td v-if="showColumn('user.seeding')" class="number">
-            <div>{{ props.item.user.seeding }}</div>
+            <div>{{ props.item.user.seeding || 0 }}</div>
             <div v-if="showHnR && props.item.user.unsatisfieds && props.item.user.unsatisfieds != 0" :title="$t('home.headers.unsatisfieds')" ><v-icon small color="yellow darken-4">warning</v-icon>{{props.item.user.unsatisfieds}}</div>
           </td>
           <td v-if="showColumn('user.seedingSize')" class="number">
@@ -440,19 +456,22 @@ import Vue from "vue";
 import Extension from "@/service/extension";
 import {
   EAction,
-  Site,
-  LogItem,
   EModule,
+  EOpenType,
+  ETagType,
   EUserDataRequestStatus,
-  Options,
-  UserInfo,
   EViewKey,
-  LevelRequirement, UserQuickLink,
+  LevelRequirement,
+  LogItem,
+  Options,
+  Site,
+  UserInfo,
+  UserQuickLink,
 } from "@/interface/common";
 import dayjs from "dayjs";
 
 import AutoSignWarning from "./AutoSignWarning.vue";
-import { PPF } from "@/service/public";
+import {PPF} from "@/service/public";
 
 interface UserInfoEx extends UserInfo {
   joinDateTime?: string;
@@ -468,6 +487,7 @@ export default Vue.extend({
       loading: false,
       items: [] as any[],
       selectedHeaders: [] as any[],
+      selectedTags: [] as any[],
       headers: [
         {
           text: this.$t("home.headers.site"),
@@ -563,6 +583,14 @@ export default Vue.extend({
   created() {
     this.init();
   },
+  // DEBUG
+  // watch: {
+  //   selectedTags: {
+  //     handler(v) {
+  //       console.log("selectedTags changed", v);
+  //     },
+  //   },
+  // },
   computed: {
     //Done to get the ordered headers
     showHeaders(): any[] {
@@ -575,10 +603,97 @@ export default Vue.extend({
      */
     allOpenTypes() {
       return [
-        {type: 'openAllSites', icon: 'moving', color: 'secondary'},
-        {type: 'openAllUnReadMsg', icon: 'forward_to_inbox', color: 'primary'},
-        {type: 'openAllStatusErr', icon: 'sync_problem', color: 'error'},
+        {type: EOpenType.openAllSites, icon: 'moving', color: 'secondary'},
+        {type: EOpenType.openAllUnReadMsg, icon: 'forward_to_inbox', color: 'primary'},
+        {type: EOpenType.openAllStatusErr, icon: 'sync_problem', color: 'error'},
       ]
+    },
+    isSortByPriority() {
+      // @ts-ignore
+      return this.sites.filter(_ => _.priority).length > 0
+    },
+    /**
+     * 按优先级从小到大排序
+     */
+    allSitesSorted() {
+      // @ts-ignore
+      // return this.isSortByPriority ? this.sortByPriority(this.sites) : this.sites
+      return this.sortByPriority(this.sites)
+    },
+    allStatusErrSites() {
+      // @ts-ignore
+      return this.allSitesSorted
+          // 第一个一般是未登录
+          .filter((site: Site) => site.user?.lastErrorMsg || (site.user?.lastUpdateStatus !== EUserDataRequestStatus.success))
+    },
+    allUnReadMsgSites() {
+      // @ts-ignore
+      return this.allSitesSorted.filter((site: Site) => (site.user?.messageCount || 0) > 0)
+    },
+    allTaggedSites() {
+      // @ts-ignore
+      return this.allSitesSorted.filter(s => Array.isArray(s.tags) && s.tags.length > 0)
+    },
+    allUnTaggedSites() {
+      // @ts-ignore
+      return this.allSitesSorted.filter(s => !s.tags || s.tags.length === 0)
+    },
+    selectedTagValues() {
+      // @ts-ignore
+      return this.selectedTags.map((_: any) => _.value)
+    },
+    allSortedTags() {
+      // let res = [ETagType.all]
+      // if (this.allUnTaggedSites.length > 0) res.push(ETagType.unTagged)
+      // if (this.allUnReadMsgSites.length > 0) res.push(ETagType.unReadMsg)
+      // if (this.allStatusErrSites.length > 0) res.push(ETagType.statusError)
+      // 避免添加站点后, 刷新失败后, 标签反复横跳
+      let res = [ETagType.all, ETagType.unTagged, ETagType.unReadMsg, ETagType.statusError]
+      for (let site of this.allTaggedSites) {
+        res = res.concat(site.tags)
+      }
+      res = [...new Set(res)]
+      return res.map(tag => {
+        let text, value = tag
+        switch (tag) {
+          case ETagType.all:
+          case ETagType.unTagged:
+          case ETagType.unReadMsg:
+          case ETagType.statusError:
+            text = this.$t(`home.tags.${tag}`).toString()
+            break
+          default:
+            text = tag
+        }
+        return {text, value}
+      })
+    },
+    filteredSitesByTags() {
+      // @ts-ignore
+      if (this.selectedTagValues.length === 0) return this.sites
+      // @ts-ignore
+      if (this.selectedTagValues.includes(ETagType.all)) return this.sites
+      let tags = this.clone(this.selectedTagValues)
+      let res: any[] = []
+      if (tags.includes(ETagType.unTagged)) {
+        res = res.concat(this.allUnTaggedSites)
+      }
+      if (tags.includes(ETagType.unReadMsg)) {
+        res = res.concat(this.allUnReadMsgSites)
+      }
+      if (tags.includes(ETagType.statusError)) {
+        res = res.concat(this.allStatusErrSites)
+      }
+      for (let site of this.allTaggedSites) {
+        if (site.tags?.some((s: any) => tags.includes(s))) {
+          res.push(site)
+        }
+      }
+      // console.log(`filteredSitesByTags: ${tags}`, res)
+      res = this.uniqBy(res, 'name')
+      console.log(`filteredSitesByTags uniq: ${tags}`, res)
+      res = this.sortByPriority(res)
+      return res
     },
   },
 
@@ -626,6 +741,8 @@ export default Vue.extend({
           this.sites.push(_site);
         }
       });
+      // 按优先级排序
+      this.sites = this.sortByPriority(this.sites)
     },
 
     init() {
@@ -664,7 +781,7 @@ export default Vue.extend({
         msg: this.$t("home.startGetting").toString(),
       });
 
-      this.sites.forEach((site: Site, index: number) => {
+      this.filteredSitesByTags.forEach((site: Site, index: number) => {
         this.writeLog({
           event: `Home.getUserInfo.Processing`,
           msg: this.$t("home.gettingForSite", {
@@ -723,7 +840,7 @@ export default Vue.extend({
     getUserLevelGroup(site: Site) {
       let userLevel = site.user?.levelName?.toLowerCase()
       let specialNames = {
-        manager: 'admin,moderator,sys,retire,管理,版主,发种,保种,上传,退休'.split(/[,，]/ig),
+        manager: 'admin,moderator,sys,retire,uploader,管理,版主,发种,保种,上传,退休'.split(/[,，]/ig),
         vip: 'vip,贵宾'.split(/[,，]/ig),
       }
       specialNames.manager = specialNames.manager.filter(_ => !!_)
@@ -1123,6 +1240,32 @@ export default Vue.extend({
     clone(source: any) {
       return JSON.parse(JSON.stringify(source));
     },
+    uniqBy(arr: any[], predicate: any) {
+      const cb = typeof predicate === 'function' ? predicate : (o: any) => o[predicate];
+
+      return [...arr.reduce((map, item) => {
+        const key = (item === null || item === undefined) ?
+            item : cb(item);
+
+        map.has(key) || map.set(key, item);
+
+        return map;
+      }, new Map()).values()];
+    },
+    filterOnlineSites(arr: any[]) {
+      return arr.filter(s => s.offline !== true)
+    },
+    // 按优先级排序
+    sortByPriority(arr: any[]) {
+      if (this.isSortByPriority) {
+        return arr.sort((a, b) => {
+          // 兼容部分未设置优先级的站点
+          return (a.priority || Number.MAX_SAFE_INTEGER) - (b.priority || Number.MAX_SAFE_INTEGER)
+        })
+      } else {
+        return arr
+      }
+    },
 
     updateViewOptions() {
       this.$store.dispatch("updateViewOptions", {
@@ -1138,6 +1281,7 @@ export default Vue.extend({
           showLastUpdateTimeAsRelativeTime: this.showLastUpdateTimeAsRelativeTime,
           showWeek: this.showWeek,
           selectedHeaders: this.selectedHeaders,
+          selectedTags: this.selectedTags,
         },
       });
     },
@@ -1164,23 +1308,19 @@ export default Vue.extend({
       }
     },
     getAllUrlsByType: function (type: String) {
-      // 这里应该过滤有效站点的, 但是个人数据这个页面的数据好像已经过滤过了?...
       switch (type) {
-        case "openAllSites":
-        // case this.allOpenTypes[0].type:
-          return this.sites.filter(s => s.offline !== true).map((site: Site) => site.activeURL)
-        case "openAllStatusErr":
-        // case this.allOpenTypes[1].type:
-          return this.sites.filter(s => s.offline !== true)
-              .filter((site: Site) => site.user?.lastUpdateStatus !== EUserDataRequestStatus.success)
+        case EOpenType.openAllSites:
+          return this.filterOnlineSites(this.filteredSitesByTags)
+              .map((site: Site) => site.activeURL)
+        case EOpenType.openAllStatusErr:
+          // 只打开有效站点
+          return this.filterOnlineSites(this.allStatusErrSites)
               .map((site: Site) => this.defaultQuickLinks(site)[0] || site.activeURL)
-              .map(s => s.href || s)
-        case "openAllUnReadMsg":
-        // case this.allOpenTypes[2].type:
-          return this.sites.filter(s => s.offline !== true)
-              .filter((site: Site) => (site.user?.messageCount || 0) > 0)
+              .map((s: any) => s.href || s)
+        case EOpenType.openAllUnReadMsg:
+          return this.filterOnlineSites(this.allUnReadMsgSites)
               .map((site: Site) => this.defaultQuickLinks(site)[1] || site.activeURL)
-              .map(s => s.href || s)
+              .map((s: any) => s.href || s)
         default:
           throw new Error(`getAllUrlsByType: 未知的类型：${type}`)
       }
@@ -1193,50 +1333,61 @@ export default Vue.extend({
         // from jpop
         case 'Gazelle':
           links = [
-            {color: 'primary', desc: `${uname}(${uid})`, href: new URL(`/user.php?id=${uid}`, site.activeURL).toString()},
-            {color: 'success', desc: this.$t("home.mailbox").toString(), href: new URL(`/inbox.php`, site.activeURL).toString()},
-            {color: 'success', desc: this.$t("home.torrents").toString(), href: new URL(`/torrents.php`, site.activeURL).toString()},
-            {color: 'primary', desc: this.$t("home.control_panel").toString(), href: new URL(`/user.php?action=edit&userid=${uid}`, site.activeURL).toString()},
-            // {color: 'primary', desc: this.$t("home.security").toString(), href: new URL(`/user.php?action=edit&userid=${uid}#paranoia_settings`, site.activeURL).toString()},
-            // {color: 'primary', desc: this.$t("home.2FA").toString(), href: new URL(`/user.php?action=edit&userid=${uid}#access_settings`, site.activeURL).toString()},
+            {color: 'primary', desc: `${uname}(${uid})`, href: `/user.php?id=${uid}`},
+            {color: 'success', desc: this.$t("home.mailbox").toString(), href: `/inbox.php`},
+            {color: 'success', desc: this.$t("home.torrents").toString(), href: `/torrents.php`},
+            {color: 'primary', desc: this.$t("home.control_panel").toString(), href: `/user.php?action=edit&userid=${uid}`},
+            // {color: 'primary', desc: this.$t("home.security").toString(), href: `/user.php?action=edit&userid=${uid}#paranoia_settings`},
+            // {color: 'primary', desc: this.$t("home.2FA").toString(), href: `/user.php?action=edit&userid=${uid}#access_settings`},
           ]
           break
         // from GPW
         case 'GazelleJSONAPI':
           links = [
-            {color: 'primary', desc: `${uname}(${uid})`, href: new URL(`/user.php?id=${uid}`, site.activeURL).toString()},
-            {color: 'success', desc: this.$t("home.mailbox").toString(), href: new URL(`/inbox.php`, site.activeURL).toString()},
-            {color: 'success', desc: this.$t("home.torrents").toString(), href: new URL(`/torrents.php`, site.activeURL).toString()},
-            {color: 'primary', desc: this.$t("home.control_panel").toString(), href: new URL(`/user.php?action=edit&userid=${uid}`, site.activeURL).toString()},
-            {color: 'primary', desc: this.$t("home.security").toString(), href: new URL(`/user.php?action=edit&userid=${uid}#paranoia_settings`, site.activeURL).toString()},
-            // {color: 'primary', desc: this.$t("home.2FA").toString(), href: new URL(`/user.php?action=edit&userid=${uid}#access_settings`, site.activeURL).toString()},
+            {color: 'primary', desc: `${uname}(${uid})`, href: `/user.php?id=${uid}`},
+            {color: 'success', desc: this.$t("home.mailbox").toString(), href: `/inbox.php`},
+            {color: 'success', desc: this.$t("home.torrents").toString(), href: `/torrents.php`},
+            {color: 'primary', desc: this.$t("home.control_panel").toString(), href: `/user.php?action=edit&userid=${uid}`},
+            {color: 'primary', desc: this.$t("home.security").toString(), href: `/user.php?action=edit&userid=${uid}#paranoia_settings`},
+            // {color: 'primary', desc: this.$t("home.2FA").toString(), href: `/user.php?action=edit&userid=${uid}#access_settings`},
           ]
           break
         // from 观众
         case 'NexusPHP':
           links = [
-            {color: 'primary', desc: `${uname}(${uid})`, href: new URL(`/userdetails.php?id=${uid}`, site.activeURL).toString()},
-            {color: 'success', desc: this.$t("home.mailbox").toString(), href: new URL(`/messages.php`, site.activeURL).toString()},
-            {color: 'success', desc: this.$t("home.torrents").toString(), href: new URL(`/torrents.php`, site.activeURL).toString()},
-            {color: 'primary', desc: this.$t("home.control_panel").toString(), href: new URL(`/usercp.php`, site.activeURL).toString()},
-            {color: 'primary', desc: this.$t("home.security").toString(), href: new URL(`/usercp.php?action=security`, site.activeURL).toString()},
-            // {color: 'primary', desc: this.$t("home.2FA").toString(), href: new URL(`/usercp.php?action=secAuth`, site.activeURL).toString()},
+            {color: 'primary', desc: `${uname}(${uid})`, href: `/userdetails.php?id=${uid}`},
+            {color: 'success', desc: this.$t("home.mailbox").toString(), href: `/messages.php`},
+            {color: 'success', desc: this.$t("home.torrents").toString(), href: `/torrents.php`},
+            {color: 'primary', desc: this.$t("home.control_panel").toString(), href: `/usercp.php`},
+            {color: 'primary', desc: this.$t("home.security").toString(), href: `/usercp.php?action=security`},
+            // {color: 'primary', desc: this.$t("home.2FA").toString(), href: `/usercp.php?action=secAuth`},
           ]
           break
         // from zhuque
         case 'TNode':
           links = [
-            {color: 'primary', desc: `${uname}(${uid})`, href: new URL(`/user/info`, site.activeURL).toString()},
-            {color: 'success', desc: this.$t("home.mailbox").toString(), href: new URL(`/message/system`, site.activeURL).toString()},
-            {color: 'success', desc: this.$t("home.torrents").toString(), href: new URL(`/torrent/list/`, site.activeURL).toString()},
-            {color: 'primary', desc: this.$t("home.control_panel").toString(), href: new URL(`/user/setting`, site.activeURL).toString()},
+            {color: 'primary', desc: `${uname}(${uid})`, href: `/user/info`},
+            {color: 'success', desc: this.$t("home.mailbox").toString(), href: `/message/system`},
+            {color: 'success', desc: this.$t("home.torrents").toString(), href: `/torrent/list/`},
+            {color: 'primary', desc: this.$t("home.control_panel").toString(), href: `/user/setting`},
+          ]
+          break
+        case 'TTG':
+          links = [
+            {color: 'primary', desc: `${uname}(${uid})`, href: `/userdetails.php?id=${uid}`},
+            {color: 'success', desc: this.$t("home.mailbox").toString(), href: `/messages.php`},
+            {color: 'success', desc: this.$t("home.torrents").toString(), href: `/browse.php`},
+            {color: 'primary', desc: this.$t("home.control_panel").toString(), href: `/my.php`},
+            // {color: 'primary', desc: this.$t("home.2FA").toString(), href: `/mystep.php`},
           ]
           break
         case 'Discuz':
         case 'UNIT3D':
         default:
+          console.log(`un-support schema for quickLinks: ${site.schema}`)
           break
       }
+      links = links.map(i => ({...i, href: new URL(i.href, site.activeURL).toString()}))
       return links
     }
   },
@@ -1323,7 +1474,12 @@ export default Vue.extend({
   }
 
   .select {
-    max-width: 180px;
+    max-width: 160px;
+  }
+  .select-tags {
+    max-width: 70px;
+    max-height: 70%;
+    margin-left: 5px;
   }
 
   .lastUpdateTime {
@@ -1331,8 +1487,8 @@ export default Vue.extend({
   }
 
   .batchBtn {
-    min-width: 0;
-    margin: 1px 1px;
+    min-width: 60px;
+    margin: 3px 3px;
   }
 }
 </style>
